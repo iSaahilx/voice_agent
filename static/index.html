@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Low-Latency Voice Agent - Deepgram</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 900px;
+            width: 100%;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 12px;
+            border-radius: 10px;
+            font-weight: 500;
+            margin-bottom: 10px;
+        }
+
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status.thinking {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status.connected .status-indicator {
+            background: #28a745;
+        }
+
+        .status.disconnected .status-indicator {
+            background: #dc3545;
+        }
+
+        .status.thinking .status-indicator {
+            background: #ffc107;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .latency-info {
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+
+        .transcriptions {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 400px;
+            max-height: 500px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            padding: 12px 16px;
+            border-radius: 12px;
+            max-width: 80%;
+            word-wrap: break-word;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            background: #667eea;
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.assistant {
+            background: #e9ecef;
+            color: #333;
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message-header {
+            font-size: 11px;
+            font-weight: 600;
+            margin-bottom: 5px;
+            opacity: 0.8;
+        }
+
+        .message-content {
+            font-size: 15px;
+            line-height: 1.5;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .btn-start {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-stop {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-start:hover {
+            background: #218838;
+        }
+
+        .btn-stop:hover {
+            background: #c82333;
+        }
+
+        .btn-start:disabled,
+        .btn-stop:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #999;
+            padding: 40px;
+            font-style: italic;
+        }
+
+        /* Scrollbar styling */
+        .transcriptions::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .transcriptions::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+
+        .transcriptions::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+
+        .transcriptions::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ Low-Latency Voice Agent</h1>
+        <p class="subtitle">Powered by Deepgram Voice Agent API & Gemini Flash 2.5</p>
+        
+        <div id="status" class="status disconnected">
+            <span class="status-indicator"></span>
+            <span id="statusText">Disconnected</span>
+        </div>
+        
+        <div id="latencyInfo" class="latency-info" style="display: none;">
+            Response latency: <span id="latencyValue">-</span>ms
+        </div>
+
+        <div class="transcriptions" id="transcriptions">
+            <div class="empty-state">Conversation will appear here...</div>
+        </div>
+
+        <div class="controls">
+            <button id="startBtn" class="btn-start" onclick="startConversation()">Start Conversation</button>
+            <button id="stopBtn" class="btn-stop" onclick="stopConversation()" disabled>Stop</button>
+        </div>
+    </div>
+
+    <script>
+        let socket;
+        let mediaStream;
+        let audioContext;
+        let processor;
+        let isConnected = false;
+        let audioQueue = [];
+        let isPlaying = false;
+        let conversationStarted = false;
+
+        function updateStatus(status, text) {
+            const statusEl = document.getElementById('status');
+            const statusText = document.getElementById('statusText');
+            statusEl.className = `status ${status}`;
+            statusText.textContent = text;
+        }
+
+        function addMessage(role, content) {
+            const transcriptions = document.getElementById('transcriptions');
+            const emptyState = transcriptions.querySelector('.empty-state');
+            if (emptyState) {
+                emptyState.remove();
+            }
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            
+            const header = document.createElement('div');
+            header.className = 'message-header';
+            header.textContent = role === 'user' ? '👤 You' : '🤖 Assistant';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = content;
+            
+            messageDiv.appendChild(header);
+            messageDiv.appendChild(contentDiv);
+            transcriptions.appendChild(messageDiv);
+            
+            // Auto-scroll to bottom
+            transcriptions.scrollTop = transcriptions.scrollHeight;
+        }
+
+        function updateLatency(latency) {
+            const latencyInfo = document.getElementById('latencyInfo');
+            const latencyValue = document.getElementById('latencyValue');
+            if (latency) {
+                latencyInfo.style.display = 'block';
+                latencyValue.textContent = latency;
+            } else {
+                latencyInfo.style.display = 'none';
+            }
+        }
+
+        async function startConversation() {
+            if (conversationStarted) return;
+
+            try {
+                conversationStarted = true;
+                document.getElementById('startBtn').disabled = true;
+                updateStatus('disconnected', 'Connecting...');
+
+                // Create audio context with 16kHz sample rate for lower latency
+                audioContext = new AudioContext({
+                    sampleRate: 16000
+                });
+
+                // Get microphone permission
+                const constraints = {
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000,
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false,
+                        latency: 0
+                    }
+                };
+                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+                // Connect to WebSocket server
+                socket = new WebSocket('ws://localhost:3000');
+
+                socket.onopen = () => {
+                    isConnected = true;
+                    updateStatus('connected', 'Connected - Listening...');
+                    startStreaming();
+                    document.getElementById('stopBtn').disabled = false;
+                };
+
+                socket.onmessage = async (event) => {
+                    // Handle text messages (transcriptions, events)
+                    if (typeof event.data === 'string') {
+                        try {
+                            const data = JSON.parse(event.data);
+                            handleTextMessage(data);
+                        } catch (error) {
+                            console.error('Error parsing message:', error);
+                        }
+                    } 
+                    // Handle binary messages (audio)
+                    else if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
+                        try {
+                            const arrayBuffer = event.data instanceof Blob 
+                                ? await event.data.arrayBuffer() 
+                                : event.data;
+                            const audioData = new Int16Array(arrayBuffer);
+                            audioQueue.push(audioData);
+                            if (!isPlaying) {
+                                playNextInQueue();
+                            }
+                        } catch (error) {
+                            console.error('Error processing audio response:', error);
+                        }
+                    }
+                };
+
+                socket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    updateStatus('disconnected', 'Connection Error');
+                };
+
+                socket.onclose = () => {
+                    isConnected = false;
+                    updateStatus('disconnected', 'Disconnected');
+                    stopStreaming();
+                    document.getElementById('startBtn').disabled = false;
+                    document.getElementById('stopBtn').disabled = true;
+                    conversationStarted = false;
+                };
+            } catch (error) {
+                console.error('Error initializing:', error);
+                updateStatus('disconnected', 'Error: ' + error.message);
+                conversationStarted = false;
+                document.getElementById('startBtn').disabled = false;
+            }
+        }
+
+        function handleTextMessage(data) {
+            switch (data.type) {
+                case 'transcription':
+                    addMessage(data.role, data.content);
+                    break;
+                case 'user_speaking':
+                    updateStatus('connected', 'You are speaking...');
+                    break;
+                case 'agent_thinking':
+                    updateStatus('thinking', 'Agent is thinking...');
+                    break;
+                case 'agent_speaking':
+                    updateStatus('connected', 'Agent is speaking...');
+                    if (data.latency) {
+                        updateLatency(data.latency);
+                    }
+                    break;
+            }
+        }
+
+        function startStreaming() {
+            if (!mediaStream || !isConnected) return;
+
+            try {
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                const bufferSize = 2048;
+                processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+
+                let lastSendTime = 0;
+                const sendInterval = 40; // Send every 40ms for lower latency
+
+                processor.onaudioprocess = (e) => {
+                    const now = Date.now();
+                    if (socket?.readyState === WebSocket.OPEN && now - lastSendTime >= sendInterval) {
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        const pcmData = convertFloatToPcm(inputData);
+                        socket.send(pcmData.buffer);
+                        lastSendTime = now;
+                    }
+                };
+            } catch (error) {
+                console.error('Error starting audio stream:', error);
+            }
+        }
+
+        function convertFloatToPcm(floatData) {
+            const pcmData = new Int16Array(floatData.length);
+            for (let i = 0; i < floatData.length; i++) {
+                const s = Math.max(-1, Math.min(1, floatData[i]));
+                pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            return pcmData;
+        }
+
+        async function playNextInQueue() {
+            if (audioQueue.length === 0) {
+                isPlaying = false;
+                return;
+            }
+
+            isPlaying = true;
+            const audioData = audioQueue.shift();
+
+            try {
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                // Create buffer with 16kHz sample rate
+                const buffer = audioContext.createBuffer(1, audioData.length, 16000);
+                const channelData = buffer.getChannelData(0);
+
+                // Convert Int16 to Float32
+                for (let i = 0; i < audioData.length; i++) {
+                    channelData[i] = audioData[i] / (audioData[i] >= 0 ? 0x7FFF : 0x8000);
+                }
+
+                const source = audioContext.createBufferSource();
+                source.buffer = buffer;
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = 1.0;
+
+                source.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+
+                source.onended = () => {
+                    playNextInQueue();
+                };
+
+                source.start(0);
+            } catch (error) {
+                console.error('Error playing audio:', error);
+                isPlaying = false;
+                playNextInQueue();
+            }
+        }
+
+        function stopConversation() {
+            conversationStarted = false;
+            audioQueue = [];
+            isPlaying = false;
+            
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            
+            if (socket) {
+                socket.close();
+            }
+            
+            updateStatus('disconnected', 'Disconnected');
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            updateLatency(null);
+        }
+
+        // Clean up when the page is closed
+        window.onbeforeunload = () => {
+            stopConversation();
+        };
+    </script>
+</body>
+</html>

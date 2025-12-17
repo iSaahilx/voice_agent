@@ -1,0 +1,29 @@
+{
+  "name": "voice-agent",
+  "version": "1.0.0",
+  "description": "A Node.js starter application for Deepgram's Voice Agent API",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "ts-node src/index.ts",
+    "dev": "ts-node-dev --respawn src/index.ts"
+  },
+  "keywords": [
+    "deepgram",
+    "voice-agent",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@deepgram/sdk": "^4.0.1",
+    "dotenv": "^16.3.1",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.2",
+    "@types/ws": "^8.5.6",
+    "typescript": "^5.2.2",
+    "ts-node": "^10.9.1"
+  }
+}
