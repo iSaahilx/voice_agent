@@ -324,9 +324,18 @@
                 document.getElementById('startBtn').disabled = true;
                 updateStatus('disconnected', 'Connecting...');
 
-                // Create audio context - use native sample rate for best performance
-                // We'll handle 16kHz to native rate conversion in the playback processor
-                audioContext = new AudioContext();
+                // Try to create AudioContext at 16kHz to match Deepgram's expected input rate
+                // This avoids resampling delays on input audio
+                let audioContextSampleRate = 16000;
+                try {
+                    // Some browsers support custom sample rates
+                    audioContext = new AudioContext({ sampleRate: 16000 });
+                    audioContextSampleRate = audioContext.sampleRate;
+                } catch (e) {
+                    // Fallback to native rate if 16kHz not supported
+                    audioContext = new AudioContext();
+                    audioContextSampleRate = audioContext.sampleRate;
+                }
 
                 // Get microphone permission
                 const constraints = {
@@ -436,51 +445,47 @@
                 source.connect(processor);
                 processor.connect(audioContext.destination);
 
-                // Resampling: native rate -> 16kHz for Deepgram
-                const nativeSampleRate = audioContext.sampleRate;
+                // Check if resampling is needed
+                const actualSampleRate = audioContext.sampleRate;
                 const targetSampleRate = 16000;
-                const stepSize = nativeSampleRate / targetSampleRate; // e.g., 44100/16000 = 2.75625
-                let inputSamples = [];
-                let outputSamples = [];
-                let currentIndex = 0;
+                const needsResampling = Math.abs(actualSampleRate - targetSampleRate) > 100;
+                
+                let resampleAccumulator = 0;
+                let resampleBuffer = [];
+                const stepSize = needsResampling ? actualSampleRate / targetSampleRate : 1;
 
-                // Throttle audio sending to balance latency and chunk size
+                // Send audio frequently for low latency - small chunks, no big buffers
                 let lastSendTime = 0;
-                const sendInterval = 20; // Send every 20ms
+                const sendInterval = 10; // Send every 10ms for very low latency
 
                 processor.onaudioprocess = (e) => {
                     const now = Date.now();
-                    if (socket?.readyState === WebSocket.OPEN && now - lastSendTime >= sendInterval) {
-                        const inputData = e.inputBuffer.getChannelData(0);
-                        
-                        // Add input samples
-                        for (let i = 0; i < inputData.length; i++) {
-                            inputSamples.push(inputData[i]);
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    
+                    if (!needsResampling) {
+                        // No resampling - send directly with minimal delay
+                        if (socket?.readyState === WebSocket.OPEN && now - lastSendTime >= sendInterval) {
+                            const pcmData = convertFloatToPcm(inputData);
+                            socket.send(pcmData.buffer);
+                            lastSendTime = now;
                         }
-                        
-                        // Downsample: take every Nth sample to get 16kHz
-                        while (currentIndex < inputSamples.length) {
-                            const idx = Math.floor(currentIndex);
-                            if (idx < inputSamples.length) {
-                                outputSamples.push(inputSamples[idx]);
-                                currentIndex += stepSize;
-                            } else {
-                                break;
+                    } else {
+                        // Resample with minimal buffering - send very small chunks
+                        for (let i = 0; i < inputData.length; i++) {
+                            resampleAccumulator += stepSize;
+                            if (resampleAccumulator >= 1.0) {
+                                resampleBuffer.push(inputData[i]);
+                                resampleAccumulator -= 1.0;
                             }
                         }
                         
-                        // Remove processed input samples
-                        const consumed = Math.floor(currentIndex);
-                        if (consumed > 0) {
-                            inputSamples.splice(0, consumed);
-                            currentIndex = currentIndex - consumed;
-                        }
-                        
-                        // Send when we have ~320 samples (20ms at 16kHz)
-                        if (outputSamples.length >= 320) {
-                            const pcmData = convertFloatToPcm(new Float32Array(outputSamples.slice(0, 320)));
+                        // Send tiny chunks frequently (80 samples = 5ms at 16kHz) for instant response
+                        if (socket?.readyState === WebSocket.OPEN && 
+                            (resampleBuffer.length >= 80 || (now - lastSendTime >= sendInterval && resampleBuffer.length > 0))) {
+                            const samplesToSend = Math.min(80, resampleBuffer.length);
+                            const pcmData = convertFloatToPcm(new Float32Array(resampleBuffer.slice(0, samplesToSend)));
                             socket.send(pcmData.buffer);
-                            outputSamples = outputSamples.slice(320);
+                            resampleBuffer.splice(0, samplesToSend);
                             lastSendTime = now;
                         }
                     }
@@ -611,3 +616,4 @@
     </script>
 </body>
 </html>
+
