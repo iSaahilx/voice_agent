@@ -266,9 +266,10 @@
         let mediaStream;
         let audioContext;
         let processor;
+        let outputProcessor; // For continuous audio playback
         let isConnected = false;
-        let audioQueue = [];
-        let isPlaying = false;
+        let audioBuffer = []; // Continuous buffer for audio data
+        let audioBufferReadIndex = 0;
         let conversationStarted = false;
 
         function updateStatus(status, text) {
@@ -323,10 +324,9 @@
                 document.getElementById('startBtn').disabled = true;
                 updateStatus('disconnected', 'Connecting...');
 
-                // Create audio context with 16kHz sample rate for lower latency
-                audioContext = new AudioContext({
-                    sampleRate: 16000
-                });
+                // Create audio context - use native sample rate for best performance
+                // We'll handle 16kHz to native rate conversion in the playback processor
+                audioContext = new AudioContext();
 
                 // Get microphone permission
                 const constraints = {
@@ -371,9 +371,14 @@
                                 ? await event.data.arrayBuffer() 
                                 : event.data;
                             const audioData = new Int16Array(arrayBuffer);
-                            audioQueue.push(audioData);
-                            if (!isPlaying) {
-                                playNextInQueue();
+                            // Convert Int16 to Float32 and add to continuous buffer
+                            for (let i = 0; i < audioData.length; i++) {
+                                const sample = audioData[i] / (audioData[i] >= 0 ? 0x7FFF : 0x8000);
+                                audioBuffer.push(sample);
+                            }
+                            // Start playback if not already started
+                            if (!outputProcessor) {
+                                startAudioPlayback();
                             }
                         } catch (error) {
                             console.error('Error processing audio response:', error);
@@ -431,16 +436,13 @@
                 source.connect(processor);
                 processor.connect(audioContext.destination);
 
-                let lastSendTime = 0;
-                const sendInterval = 40; // Send every 40ms for lower latency
-
+                // Send audio immediately without throttling for lowest latency
                 processor.onaudioprocess = (e) => {
-                    const now = Date.now();
-                    if (socket?.readyState === WebSocket.OPEN && now - lastSendTime >= sendInterval) {
+                    if (socket?.readyState === WebSocket.OPEN) {
                         const inputData = e.inputBuffer.getChannelData(0);
                         const pcmData = convertFloatToPcm(inputData);
+                        // Send immediately - WebSocket handles buffering
                         socket.send(pcmData.buffer);
-                        lastSendTime = now;
                     }
                 };
             } catch (error) {
@@ -457,53 +459,82 @@
             return pcmData;
         }
 
-        async function playNextInQueue() {
-            if (audioQueue.length === 0) {
-                isPlaying = false;
-                return;
-            }
-
-            isPlaying = true;
-            const audioData = audioQueue.shift();
+        function startAudioPlayback() {
+            if (outputProcessor || !audioContext) return;
 
             try {
+                // Ensure audio context is running
                 if (audioContext.state === 'suspended') {
-                    await audioContext.resume();
+                    audioContext.resume();
                 }
 
-                // Create buffer with 16kHz sample rate
-                const buffer = audioContext.createBuffer(1, audioData.length, 16000);
-                const channelData = buffer.getChannelData(0);
+                // Create a ScriptProcessorNode for continuous playback
+                // Buffer size: 4096 samples for low latency
+                const bufferSize = 4096;
+                outputProcessor = audioContext.createScriptProcessor(bufferSize, 0, 1);
+                
+                const nativeSampleRate = audioContext.sampleRate;
+                const inputSampleRate = 16000;
+                const sampleRateRatio = nativeSampleRate / inputSampleRate;
 
-                // Convert Int16 to Float32
-                for (let i = 0; i < audioData.length; i++) {
-                    channelData[i] = audioData[i] / (audioData[i] >= 0 ? 0x7FFF : 0x8000);
-                }
+                // Resampling state
+                let resampleBuffer = [];
+                let resampleIndex = 0;
 
-                const source = audioContext.createBufferSource();
-                source.buffer = buffer;
-                const gainNode = audioContext.createGain();
-                gainNode.gain.value = 1.0;
+                outputProcessor.onaudioprocess = (e) => {
+                    const output = e.outputBuffer.getChannelData(0);
+                    const outputLength = output.length;
 
-                source.connect(gainNode);
-                gainNode.connect(audioContext.destination);
+                    // Resample from 16kHz to native sample rate
+                    for (let i = 0; i < outputLength; i++) {
+                        // Calculate source index with linear interpolation
+                        const sourceIndex = resampleIndex / sampleRateRatio;
+                        const sourceIndexFloor = Math.floor(sourceIndex);
+                        const sourceIndexFrac = sourceIndex - sourceIndexFloor;
 
-                source.onended = () => {
-                    playNextInQueue();
+                        if (sourceIndexFloor + 1 < audioBuffer.length) {
+                            // Linear interpolation for smooth resampling
+                            const sample1 = audioBuffer[sourceIndexFloor];
+                            const sample2 = audioBuffer[sourceIndexFloor + 1];
+                            output[i] = sample1 + (sample2 - sample1) * sourceIndexFrac;
+                        } else if (sourceIndexFloor < audioBuffer.length) {
+                            output[i] = audioBuffer[sourceIndexFloor];
+                        } else {
+                            output[i] = 0; // Silence if no data
+                        }
+
+                        resampleIndex += sampleRateRatio;
+                    }
+
+                    // Remove consumed samples from buffer (keep some overlap for smooth playback)
+                    const consumedSamples = Math.floor(resampleIndex / sampleRateRatio);
+                    if (consumedSamples > 0) {
+                        audioBuffer.splice(0, consumedSamples);
+                        resampleIndex = resampleIndex % sampleRateRatio;
+                    }
+
+                    // If buffer is getting too large, trim it (shouldn't happen in normal operation)
+                    if (audioBuffer.length > 48000) { // ~3 seconds at 16kHz
+                        audioBuffer.splice(0, audioBuffer.length - 16000);
+                    }
                 };
 
-                source.start(0);
+                outputProcessor.connect(audioContext.destination);
             } catch (error) {
-                console.error('Error playing audio:', error);
-                isPlaying = false;
-                playNextInQueue();
+                console.error('Error starting audio playback:', error);
+                outputProcessor = null;
             }
         }
 
         function stopConversation() {
             conversationStarted = false;
-            audioQueue = [];
-            isPlaying = false;
+            audioBuffer = [];
+            audioBufferReadIndex = 0;
+            
+            if (outputProcessor) {
+                outputProcessor.disconnect();
+                outputProcessor = null;
+            }
             
             if (processor) {
                 processor.disconnect();

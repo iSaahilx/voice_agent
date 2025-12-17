@@ -234,42 +234,42 @@ Keep responses brief (1-2 sentences, under 50 words). Be natural and conversatio
         const combinedPrompt =
           (memoryPrompt ? `${memoryPrompt}\n\n` : '') + basePrompt;
 
-        agent.configure({
-          audio: {
-            input: {
-              encoding: 'linear16',
+      agent.configure({
+        audio: {
+          input: {
+            encoding: 'linear16',
               sample_rate: 16000 // Lower sample rate = smaller chunks = lower latency
-            },
-            output: {
-              encoding: 'linear16',
+          },
+          output: {
+            encoding: 'linear16',
               sample_rate: 16000,
               container: 'none' // No container overhead
+          }
+        },
+        agent: {
+          listen: {
+            provider: {
+              type: 'deepgram',
+                model: 'nova-2' // nova-2 is optimized for low latency
             }
           },
-          agent: {
-            listen: {
-              provider: {
-                type: 'deepgram',
-                model: 'nova-2' // nova-2 is optimized for low latency
-              }
-            },
-            think: {
-              provider: {
+          think: {
+            provider: {
                 type: 'open_ai',
                 model: 'gpt-4o-mini'
-              },
+            },
               // Minimal prompt for faster processing with one-time memory injection
               prompt: combinedPrompt
-            },
-            speak: {
-              provider: {
-                type: 'deepgram',
-                model: 'aura-2-thalia-en' // Low-latency TTS model
-              }
-            },
+          },
+          speak: {
+            provider: {
+              type: 'deepgram',
+              model: 'aura-2-thalia-en' // Low-latency TTS model
+            }
+          },
             // Minimal greeting for faster start
             greeting: 'Hi!'
-          }
+        }
         });
       })().catch((err) => {
         console.error('Error configuring agent with memory:', err);
@@ -334,9 +334,9 @@ Keep responses brief (1-2 sentences, under 50 words). Be natural and conversatio
             console.error('Error sending transcription:', error);
           }
         }
-        // Minimal logging to reduce overhead
-        if (message.role === 'user' || message.role === 'assistant') {
-          console.log(`${message.role}: ${message.content}`);
+      // Minimal logging to reduce overhead
+      if (message.role === 'user' || message.role === 'assistant') {
+        console.log(`${message.role}: ${message.content}`);
         }
       }
     );
