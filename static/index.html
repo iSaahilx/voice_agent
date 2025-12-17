@@ -436,13 +436,53 @@
                 source.connect(processor);
                 processor.connect(audioContext.destination);
 
-                // Send audio immediately without throttling for lowest latency
+                // Resampling: native rate -> 16kHz for Deepgram
+                const nativeSampleRate = audioContext.sampleRate;
+                const targetSampleRate = 16000;
+                const stepSize = nativeSampleRate / targetSampleRate; // e.g., 44100/16000 = 2.75625
+                let inputSamples = [];
+                let outputSamples = [];
+                let currentIndex = 0;
+
+                // Throttle audio sending to balance latency and chunk size
+                let lastSendTime = 0;
+                const sendInterval = 20; // Send every 20ms
+
                 processor.onaudioprocess = (e) => {
-                    if (socket?.readyState === WebSocket.OPEN) {
+                    const now = Date.now();
+                    if (socket?.readyState === WebSocket.OPEN && now - lastSendTime >= sendInterval) {
                         const inputData = e.inputBuffer.getChannelData(0);
-                        const pcmData = convertFloatToPcm(inputData);
-                        // Send immediately - WebSocket handles buffering
-                        socket.send(pcmData.buffer);
+                        
+                        // Add input samples
+                        for (let i = 0; i < inputData.length; i++) {
+                            inputSamples.push(inputData[i]);
+                        }
+                        
+                        // Downsample: take every Nth sample to get 16kHz
+                        while (currentIndex < inputSamples.length) {
+                            const idx = Math.floor(currentIndex);
+                            if (idx < inputSamples.length) {
+                                outputSamples.push(inputSamples[idx]);
+                                currentIndex += stepSize;
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        // Remove processed input samples
+                        const consumed = Math.floor(currentIndex);
+                        if (consumed > 0) {
+                            inputSamples.splice(0, consumed);
+                            currentIndex = currentIndex - consumed;
+                        }
+                        
+                        // Send when we have ~320 samples (20ms at 16kHz)
+                        if (outputSamples.length >= 320) {
+                            const pcmData = convertFloatToPcm(new Float32Array(outputSamples.slice(0, 320)));
+                            socket.send(pcmData.buffer);
+                            outputSamples = outputSamples.slice(320);
+                            lastSendTime = now;
+                        }
                     }
                 };
             } catch (error) {
