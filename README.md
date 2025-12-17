@@ -68,22 +68,6 @@ http://localhost:3000
 - You should see real-time transcriptions of both your speech and the agent's responses.
 - You should hear the agent's responses played back in your browser.
 
-### Run with Docker (e.g. on Render)
-
-You can also run this app in a container:
-
-```bash
-docker build -t node-voice-agent .
-docker run -p 3000:3000 -e DEEPGRAM_API_KEY=your_key_here node-voice-agent
-```
-
-For Render:
-- Create a new **Web Service** from this repo
-- Select **Docker** as the runtime
-- Set the **Dockerfile path** to `Dockerfile`
-- Set `DEEPGRAM_API_KEY` in Render environment variables
-- Render will automatically use port `3000` exposed by the container
-
 ## Low-Latency Optimizations
 
 This implementation is optimized for the lowest possible latency:

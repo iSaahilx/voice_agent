@@ -341,8 +341,11 @@
                 };
                 mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
 
-                // Connect to WebSocket server
-                socket = new WebSocket('ws://localhost:3000');
+                // Connect to WebSocket server (works locally and on Render)
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+                const wsHost = window.location.host || 'localhost:3000';
+                const wsUrl = `${wsProtocol}://${wsHost}`;
+                socket = new WebSocket(wsUrl);
 
                 socket.onopen = () => {
                     isConnected = true;
@@ -386,10 +389,8 @@
                 socket.onclose = () => {
                     isConnected = false;
                     updateStatus('disconnected', 'Disconnected');
-                    stopStreaming();
-                    document.getElementById('startBtn').disabled = false;
-                    document.getElementById('stopBtn').disabled = true;
-                    conversationStarted = false;
+                    // Reuse the same cleanup logic as the Stop button
+                    stopConversation();
                 };
             } catch (error) {
                 console.error('Error initializing:', error);
