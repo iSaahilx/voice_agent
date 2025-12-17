@@ -475,11 +475,12 @@
                 
                 const nativeSampleRate = audioContext.sampleRate;
                 const inputSampleRate = 16000;
-                const sampleRateRatio = nativeSampleRate / inputSampleRate;
+                // Ratio: how many input samples per output sample
+                // If native is 44100 and input is 16000, we need 16000/44100 = 0.3628 input samples per output sample
+                const inputToOutputRatio = inputSampleRate / nativeSampleRate;
 
-                // Resampling state
-                let resampleBuffer = [];
-                let resampleIndex = 0;
+                // Resampling state - tracks position in input buffer (in input samples)
+                let inputPosition = 0;
 
                 outputProcessor.onaudioprocess = (e) => {
                     const output = e.outputBuffer.getChannelData(0);
@@ -487,8 +488,8 @@
 
                     // Resample from 16kHz to native sample rate
                     for (let i = 0; i < outputLength; i++) {
-                        // Calculate source index with linear interpolation
-                        const sourceIndex = resampleIndex / sampleRateRatio;
+                        // Calculate source index in input buffer
+                        const sourceIndex = inputPosition;
                         const sourceIndexFloor = Math.floor(sourceIndex);
                         const sourceIndexFrac = sourceIndex - sourceIndexFloor;
 
@@ -503,14 +504,16 @@
                             output[i] = 0; // Silence if no data
                         }
 
-                        resampleIndex += sampleRateRatio;
+                        // Move forward in input buffer by the ratio
+                        // For each output sample, we consume inputToOutputRatio input samples
+                        inputPosition += inputToOutputRatio;
                     }
 
-                    // Remove consumed samples from buffer (keep some overlap for smooth playback)
-                    const consumedSamples = Math.floor(resampleIndex / sampleRateRatio);
+                    // Remove consumed samples from buffer
+                    const consumedSamples = Math.floor(inputPosition);
                     if (consumedSamples > 0) {
                         audioBuffer.splice(0, consumedSamples);
-                        resampleIndex = resampleIndex % sampleRateRatio;
+                        inputPosition = inputPosition - consumedSamples; // Keep fractional part
                     }
 
                     // If buffer is getting too large, trim it (shouldn't happen in normal operation)
